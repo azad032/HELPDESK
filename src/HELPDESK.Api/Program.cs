@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -56,11 +57,22 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+const string WebClientCorsPolicy = "WebClient";
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(WebClientCorsPolicy, policy =>
+        policy.WithOrigins("http://localhost:5173")
+            .AllowAnyHeader()
+            .AllowAnyMethod());
+});
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    app.MapScalarApiReference();
+    app.MapGet("/", () => Results.Redirect("/scalar/v1")).ExcludeFromDescription();
 
     using var scope = app.Services.CreateScope();
     await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Database.MigrateAsync();
@@ -68,6 +80,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseCors(WebClientCorsPolicy);
 
 app.UseAuthentication();
 app.UseAuthorization();
