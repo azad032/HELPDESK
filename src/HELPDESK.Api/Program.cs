@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Serialization;
 using HELPDESK.Api.Data;
+using HELPDESK.Api.Middleware;
 using HELPDESK.Api.Models;
 using HELPDESK.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -79,6 +80,8 @@ if (app.Environment.IsDevelopment())
     await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Database.MigrateAsync();
     await SeedData.InitializeAsync(scope.ServiceProvider);
 }
+
+app.UseMiddleware<AiAgentMiddleware>();
 
 app.UseHttpsRedirection();
 
