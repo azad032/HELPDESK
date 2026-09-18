@@ -6,46 +6,67 @@ using HELPDESK.Api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace HELPDESK.Api.Controllers;
 
 [ApiController]
 [Route("api/tickets")]
 [Authorize]
-public class TicketsController(HelpdeskDbContext db) : ControllerBase
+public class TicketsController(HelpdeskDbContext db, IMemoryCache cache) : ControllerBase
 {
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+
     private string CurrentUserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
     private bool IsStaff => User.IsInRole(Roles.Admin) || User.IsInRole(Roles.Agent);
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<TicketResponse>>> GetTickets()
     {
-        var query = db.Tickets.AsNoTracking()
-            .Include(t => t.Requester)
-            .Include(t => t.AssignedAgent)
-            .AsQueryable();
+        var cacheKey = $"tickets:list:{CurrentUserId}";
 
-        if (!IsStaff)
+        var tickets = await cache.GetOrCreateAsync(cacheKey, async entry =>
         {
-            query = query.Where(t => t.RequesterId == CurrentUserId);
-        }
+            entry.SetAbsoluteExpiration(CacheDuration);
 
-        var tickets = await query.OrderByDescending(t => t.CreatedAt).ToListAsync();
-        return Ok(tickets.Select(ToResponse));
+            var query = db.Tickets.AsNoTracking()
+                .Include(t => t.Requester)
+                .Include(t => t.AssignedAgent)
+                .AsQueryable();
+
+            if (!IsStaff)
+            {
+                query = query.Where(t => t.RequesterId == CurrentUserId);
+            }
+
+            var results = await query.OrderByDescending(t => t.CreatedAt).ToListAsync();
+            return results.Select(ToResponse).ToList();
+        });
+
+        return Ok(tickets);
     }
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<TicketResponse>> GetTicket(int id)
     {
-        var ticket = await db.Tickets.AsNoTracking()
-            .Include(t => t.Requester)
-            .Include(t => t.AssignedAgent)
-            .FirstOrDefaultAsync(t => t.Id == id);
+        var cacheKey = $"tickets:{id}";
+
+        var ticket = await cache.GetOrCreateAsync(cacheKey, async entry =>
+        {
+            entry.SetAbsoluteExpiration(CacheDuration);
+
+            var entity = await db.Tickets.AsNoTracking()
+                .Include(t => t.Requester)
+                .Include(t => t.AssignedAgent)
+                .FirstOrDefaultAsync(t => t.Id == id);
+
+            return entity is null ? null : ToResponse(entity);
+        });
 
         if (ticket is null) return NotFound();
         if (!IsStaff && ticket.RequesterId != CurrentUserId) return Forbid();
 
-        return Ok(ToResponse(ticket));
+        return Ok(ticket);
     }
 
     [HttpPost]
@@ -62,6 +83,8 @@ public class TicketsController(HelpdeskDbContext db) : ControllerBase
         db.Tickets.Add(ticket);
         await db.SaveChangesAsync();
         await db.Entry(ticket).Reference(t => t.Requester).LoadAsync();
+
+        cache.Remove($"tickets:list:{CurrentUserId}");
 
         return CreatedAtAction(nameof(GetTicket), new { id = ticket.Id }, ToResponse(ticket));
     }
@@ -85,6 +108,8 @@ public class TicketsController(HelpdeskDbContext db) : ControllerBase
         await db.SaveChangesAsync();
         await db.Entry(ticket).Reference(t => t.AssignedAgent).LoadAsync();
 
+        cache.Remove($"tickets:{id}");
+
         return Ok(ToResponse(ticket));
     }
 
@@ -97,6 +122,9 @@ public class TicketsController(HelpdeskDbContext db) : ControllerBase
 
         db.Tickets.Remove(ticket);
         await db.SaveChangesAsync();
+
+        cache.Remove($"tickets:{id}");
+
         return NoContent();
     }
 

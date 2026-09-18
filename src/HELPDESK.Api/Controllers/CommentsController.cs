@@ -6,14 +6,17 @@ using HELPDESK.Api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace HELPDESK.Api.Controllers;
 
 [ApiController]
 [Route("api/tickets/{ticketId:int}/comments")]
 [Authorize]
-public class CommentsController(HelpdeskDbContext db) : ControllerBase
+public class CommentsController(HelpdeskDbContext db, IMemoryCache cache) : ControllerBase
 {
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+
     private string CurrentUserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
     private bool IsStaff => User.IsInRole(Roles.Admin) || User.IsInRole(Roles.Agent);
 
@@ -24,13 +27,22 @@ public class CommentsController(HelpdeskDbContext db) : ControllerBase
         if (ticket is null) return NotFound();
         if (!IsStaff && ticket.RequesterId != CurrentUserId) return Forbid();
 
-        var comments = await db.TicketComments.AsNoTracking()
-            .Include(c => c.Author)
-            .Where(c => c.TicketId == ticketId)
-            .OrderBy(c => c.CreatedAt)
-            .ToListAsync();
+        var cacheKey = $"tickets:{ticketId}:comments";
 
-        return Ok(comments.Select(ToResponse));
+        var comments = await cache.GetOrCreateAsync(cacheKey, async entry =>
+        {
+            entry.SetAbsoluteExpiration(CacheDuration);
+
+            var results = await db.TicketComments.AsNoTracking()
+                .Include(c => c.Author)
+                .Where(c => c.TicketId == ticketId)
+                .OrderBy(c => c.CreatedAt)
+                .ToListAsync();
+
+            return results.Select(ToResponse).ToList();
+        });
+
+        return Ok(comments);
     }
 
     [HttpPost]
@@ -51,6 +63,8 @@ public class CommentsController(HelpdeskDbContext db) : ControllerBase
         ticket.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         await db.Entry(comment).Reference(c => c.Author).LoadAsync();
+
+        cache.Remove($"tickets:{ticketId}:comments");
 
         return CreatedAtAction(nameof(GetComments), new { ticketId }, ToResponse(comment));
     }
