@@ -1,8 +1,8 @@
 using System.Text;
 using System.Text.Json.Serialization;
 using HELPDESK.Api.Data;
-using HELPDESK.Api.Middleware;
 using HELPDESK.Api.Models;
+using HELPDESK.Api.Repositories;
 using HELPDESK.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
@@ -16,9 +16,13 @@ builder.Services.AddControllers()
     .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddOpenApi();
 builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<TicketCacheInvalidator>();
 
 builder.Services.AddDbContext<HelpdeskDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddScoped<ITicketRepository, TicketRepository>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
 
 builder.Services
     .AddIdentityCore<ApplicationUser>(options =>
@@ -80,8 +84,6 @@ if (app.Environment.IsDevelopment())
     await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Database.MigrateAsync();
     await SeedData.InitializeAsync(scope.ServiceProvider);
 }
-
-app.UseMiddleware<AiAgentMiddleware>();
 
 app.UseHttpsRedirection();
 

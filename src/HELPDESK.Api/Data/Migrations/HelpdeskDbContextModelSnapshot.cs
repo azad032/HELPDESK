@@ -137,7 +137,7 @@ namespace HELPDESK.Api.Data.Migrations
 
                     b.HasIndex("RequesterId");
 
-                    b.ToTable("Tickets");
+                    b.ToTable("Tickets", (string)null);
                 });
 
             modelBuilder.Entity("HELPDESK.Api.Models.TicketComment", b =>
@@ -169,7 +169,7 @@ namespace HELPDESK.Api.Data.Migrations
 
                     b.HasIndex("TicketId");
 
-                    b.ToTable("TicketComments");
+                    b.ToTable("TicketComments", (string)null);
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>

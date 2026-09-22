@@ -3,6 +3,8 @@ using HELPDESK.Api.Common;
 using HELPDESK.Api.Data;
 using HELPDESK.Api.DTOs.Comments;
 using HELPDESK.Api.Models;
+using HELPDESK.Api.Repositories;
+using HELPDESK.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -13,7 +15,11 @@ namespace HELPDESK.Api.Controllers;
 [ApiController]
 [Route("api/tickets/{ticketId:int}/comments")]
 [Authorize]
-public class CommentsController(HelpdeskDbContext db, IMemoryCache cache) : ControllerBase
+public class CommentsController(
+    HelpdeskDbContext db,
+    ITicketRepository ticketRepository,
+    IMemoryCache cache,
+    TicketCacheInvalidator cacheInvalidator) : ControllerBase
 {
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
@@ -23,7 +29,7 @@ public class CommentsController(HelpdeskDbContext db, IMemoryCache cache) : Cont
     [HttpGet]
     public async Task<ActionResult<IEnumerable<CommentResponse>>> GetComments(int ticketId)
     {
-        var ticket = await db.Tickets.AsNoTracking().FirstOrDefaultAsync(t => t.Id == ticketId);
+        var ticket = await ticketRepository.GetByIdAsync(ticketId);
         if (ticket is null) return NotFound();
         if (!IsStaff && ticket.RequesterId != CurrentUserId) return Forbid();
 
@@ -48,7 +54,7 @@ public class CommentsController(HelpdeskDbContext db, IMemoryCache cache) : Cont
     [HttpPost]
     public async Task<ActionResult<CommentResponse>> AddComment(int ticketId, CommentCreateRequest request)
     {
-        var ticket = await db.Tickets.FirstOrDefaultAsync(t => t.Id == ticketId);
+        var ticket = await ticketRepository.GetTrackedByIdAsync(ticketId);
         if (ticket is null) return NotFound();
         if (!IsStaff && ticket.RequesterId != CurrentUserId) return Forbid();
 
@@ -61,10 +67,13 @@ public class CommentsController(HelpdeskDbContext db, IMemoryCache cache) : Cont
 
         db.TicketComments.Add(comment);
         ticket.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
+        await ticketRepository.SaveChangesAsync();
         await db.Entry(comment).Reference(c => c.Author).LoadAsync();
 
+        // Comments cache is keyed per-ticket and isn't wired to cacheInvalidator's token.
         cache.Remove($"tickets:{ticketId}:comments");
+        // Adding a comment bumps Ticket.UpdatedAt, so ticket list/detail caches must drop too.
+        cacheInvalidator.Invalidate();
 
         return CreatedAtAction(nameof(GetComments), new { ticketId }, ToResponse(comment));
     }
