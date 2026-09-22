@@ -43,11 +43,25 @@ function loadStoredUser(): AuthUser | null {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => loadStoredUser());
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    const stored = loadStoredUser();
+    setAuthToken(stored?.token ?? null);
+    return stored;
+  });
 
   useEffect(() => {
     setAuthToken(user?.token ?? null);
   }, [user]);
+
+  const logout = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEY);
+    setUser(null);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('helpdesk:unauthorized', logout);
+    return () => window.removeEventListener('helpdesk:unauthorized', logout);
+  }, [logout]);
 
   const applyAuthResponse = useCallback(
     (response: { token: string; email: string; displayName: string; roles: string[] }) => {
@@ -74,11 +88,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (payload: RegisterRequest) => applyAuthResponse(await api.register(payload)),
     [applyAuthResponse],
   );
-
-  const logout = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
-    setUser(null);
-  }, []);
 
   const value = useMemo<AuthContextValue>(() => {
     const roles = user?.roles ?? [];

@@ -67,12 +67,26 @@ export function TicketDetailPage() {
 
   async function handleDelete() {
     if (!confirm('Delete this ticket? This cannot be undone.')) return;
+    setIsBusy(true);
+    setError(null);
     try {
       await api.deleteTicket(ticketId);
       navigate('/');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to delete ticket.');
+      setIsBusy(false);
     }
+  }
+
+  async function handleAssignToMe() {
+    if (
+      ticket!.assignedAgentId &&
+      ticket!.assignedAgentId !== user?.id &&
+      !confirm(`This ticket is currently assigned to ${ticket!.assignedAgentName}. Reassign it to yourself?`)
+    ) {
+      return;
+    }
+    await updateTicket({ assignedAgentId: user!.id });
   }
 
   if (error && !ticket) return <div className="alert-error">{error}</div>;
@@ -128,7 +142,7 @@ export function TicketDetailPage() {
               </select>
             </label>
             {ticket.assignedAgentId !== user?.id && (
-              <button type="button" disabled={isBusy} onClick={() => updateTicket({ assignedAgentId: user!.id })}>
+              <button type="button" disabled={isBusy} onClick={handleAssignToMe}>
                 Assign to me
               </button>
             )}
