@@ -16,7 +16,7 @@ namespace HELPDESK.Api.Controllers;
 [Route("api/tickets/{ticketId:int}/comments")]
 [Authorize]
 public class CommentsController(
-    HelpdeskDbContext db,
+    HelpdeskDbContext _db,
     ITicketRepository ticketRepository,
     IMemoryCache cache,
     TicketCacheInvalidator cacheInvalidator) : ControllerBase
@@ -39,7 +39,7 @@ public class CommentsController(
         {
             entry.SetAbsoluteExpiration(CacheDuration);
 
-            var results = await db.TicketComments.AsNoTracking()
+            var results = await _db.TicketComments.AsNoTracking()
                 .Include(c => c.Author)
                 .Where(c => c.TicketId == ticketId)
                 .OrderBy(c => c.CreatedAt)
@@ -65,10 +65,10 @@ public class CommentsController(
             Body = request.Body
         };
 
-        db.TicketComments.Add(comment);
+        _db.TicketComments.Add(comment);
         ticket.UpdatedAt = DateTimeOffset.UtcNow;
         await ticketRepository.SaveChangesAsync();
-        await db.Entry(comment).Reference(c => c.Author).LoadAsync();
+        await _db.Entry(comment).Reference(c => c.Author).LoadAsync();
 
         // Comments cache is keyed per-ticket and isn't wired to cacheInvalidator's token.
         cache.Remove($"tickets:{ticketId}:comments");
