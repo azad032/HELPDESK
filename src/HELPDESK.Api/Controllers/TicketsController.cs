@@ -1,51 +1,64 @@
 using System.Security.Claims;
 using HELPDESK.Api.Common;
-using HELPDESK.Api.Data;
 using HELPDESK.Api.DTOs.Tickets;
 using HELPDESK.Api.Models;
+using HELPDESK.Api.Repositories;
+using HELPDESK.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace HELPDESK.Api.Controllers;
 
 [ApiController]
 [Route("api/tickets")]
 [Authorize]
-public class TicketsController(HelpdeskDbContext db) : ControllerBase
+public class TicketsController(
+    ITicketRepository ticketRepository,
+    IUserRepository userRepository,
+    IMemoryCache cache,
+    TicketCacheInvalidator cacheInvalidator) : ControllerBase
 {
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+
     private string CurrentUserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
     private bool IsStaff => User.IsInRole(Roles.Admin) || User.IsInRole(Roles.Agent);
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<TicketResponse>>> GetTickets()
     {
-        var query = db.Tickets.AsNoTracking()
-            .Include(t => t.Requester)
-            .Include(t => t.AssignedAgent)
-            .AsQueryable();
+        var cacheKey = $"tickets:list:{CurrentUserId}";
 
-        if (!IsStaff)
+        var tickets = await cache.GetOrCreateAsync(cacheKey, async entry =>
         {
-            query = query.Where(t => t.RequesterId == CurrentUserId);
-        }
+            entry.SetAbsoluteExpiration(CacheDuration);
+            entry.AddExpirationToken(cacheInvalidator.GetChangeToken());
 
-        var tickets = await query.OrderByDescending(t => t.CreatedAt).ToListAsync();
-        return Ok(tickets.Select(ToResponse));
+            var results = await ticketRepository.GetAllAsync(IsStaff ? null : CurrentUserId);
+            return results.Select(ToResponse).ToList();
+        });
+
+        return Ok(tickets);
     }
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<TicketResponse>> GetTicket(int id)
     {
-        var ticket = await db.Tickets.AsNoTracking()
-            .Include(t => t.Requester)
-            .Include(t => t.AssignedAgent)
-            .FirstOrDefaultAsync(t => t.Id == id);
+        var cacheKey = $"tickets:{id}";
+
+        var ticket = await cache.GetOrCreateAsync(cacheKey, async entry =>
+        {
+            entry.SetAbsoluteExpiration(CacheDuration);
+            entry.AddExpirationToken(cacheInvalidator.GetChangeToken());
+
+            var entity = await ticketRepository.GetByIdAsync(id);
+            return entity is null ? null : ToResponse(entity);
+        });
 
         if (ticket is null) return NotFound();
         if (!IsStaff && ticket.RequesterId != CurrentUserId) return Forbid();
 
-        return Ok(ToResponse(ticket));
+        return Ok(ticket);
     }
 
     [HttpPost]
@@ -59,9 +72,11 @@ public class TicketsController(HelpdeskDbContext db) : ControllerBase
             RequesterId = CurrentUserId
         };
 
-        db.Tickets.Add(ticket);
-        await db.SaveChangesAsync();
-        await db.Entry(ticket).Reference(t => t.Requester).LoadAsync();
+        await ticketRepository.AddAsync(ticket);
+        await ticketRepository.SaveChangesAsync();
+        await ticketRepository.LoadRequesterAsync(ticket);
+
+        cacheInvalidator.Invalidate();
 
         return CreatedAtAction(nameof(GetTicket), new { id = ticket.Id }, ToResponse(ticket));
     }
@@ -70,20 +85,24 @@ public class TicketsController(HelpdeskDbContext db) : ControllerBase
     [Authorize(Roles = $"{Roles.Admin},{Roles.Agent}")]
     public async Task<ActionResult<TicketResponse>> UpdateTicket(int id, TicketUpdateRequest request)
     {
-        var ticket = await db.Tickets
-            .Include(t => t.Requester)
-            .Include(t => t.AssignedAgent)
-            .FirstOrDefaultAsync(t => t.Id == id);
-
+        var ticket = await ticketRepository.GetTrackedByIdAsync(id);
         if (ticket is null) return NotFound();
+
+        if (!string.IsNullOrEmpty(request.AssignedAgentId) &&
+            await userRepository.GetByIdAsync(request.AssignedAgentId) is null)
+        {
+            return BadRequest("AssignedAgentId does not refer to an existing user.");
+        }
 
         if (request.Status.HasValue) ticket.Status = request.Status.Value;
         if (request.Priority.HasValue) ticket.Priority = request.Priority.Value;
         if (request.AssignedAgentId is not null) ticket.AssignedAgentId = request.AssignedAgentId;
         ticket.UpdatedAt = DateTimeOffset.UtcNow;
 
-        await db.SaveChangesAsync();
-        await db.Entry(ticket).Reference(t => t.AssignedAgent).LoadAsync();
+        await ticketRepository.SaveChangesAsync();
+        await ticketRepository.LoadAssignedAgentAsync(ticket);
+
+        cacheInvalidator.Invalidate();
 
         return Ok(ToResponse(ticket));
     }
@@ -92,11 +111,14 @@ public class TicketsController(HelpdeskDbContext db) : ControllerBase
     [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> DeleteTicket(int id)
     {
-        var ticket = await db.Tickets.FindAsync(id);
+        var ticket = await ticketRepository.GetTrackedByIdAsync(id);
         if (ticket is null) return NotFound();
 
-        db.Tickets.Remove(ticket);
-        await db.SaveChangesAsync();
+        ticketRepository.Remove(ticket);
+        await ticketRepository.SaveChangesAsync();
+
+        cacheInvalidator.Invalidate();
+
         return NoContent();
     }
 

@@ -34,6 +34,8 @@ The API needs `ASPNETCORE_ENVIRONMENT=Development` to run migrations/seeding aut
 
 The JWT signing key (`Jwt:Key`) is stored via `dotnet user-secrets` (from `src/HELPDESK.Api`, run `dotnet user-secrets set "Jwt:Key" "<value>"`), not in `appsettings.json`. A fresh clone needs this set before the API will start, since `Program.cs` throws if the `Jwt` config section is missing a key.
 
+`appsettings.Development.json` is gitignored (it holds `ConnectionStrings:DefaultConnection`, which may carry local credentials), so a fresh clone also needs to copy `src/HELPDESK.Api/appsettings.Development.json.example` to `src/HELPDESK.Api/appsettings.Development.json` and point it at a reachable SQL Server instance before running migrations/seeding.
+
 Run the API and the `web` dev server together for full-stack local dev — the UI at `:5173` calls the API at `:5279` (see `web/.env`'s `VITE_API_BASE_URL`, matching the API's `http` launch profile), and `Program.cs` has a CORS policy scoped to `http://localhost:5173`.
 
 ## Architecture

@@ -56,6 +56,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const body = text ? JSON.parse(text) : undefined;
 
   if (!response.ok) {
+    if (response.status === 401) {
+      window.dispatchEvent(new Event('helpdesk:unauthorized'));
+    }
     throw new ApiError(describeProblem(body, response.statusText), response.status);
   }
 
