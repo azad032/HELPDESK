@@ -12,6 +12,14 @@ using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// CreateBuilder only wires up user-secrets automatically for the Development
+// environment, but the Testing environment (used for E2E runs) needs the same
+// Jwt:Key secret without duplicating it into a checked-in or gitignored file.
+if (builder.Environment.IsEnvironment("Testing"))
+{
+    builder.Configuration.AddUserSecrets<Program>();
+}
+
 builder.Services.AddControllers()
     .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddOpenApi();
@@ -64,10 +72,11 @@ builder.Services
 builder.Services.AddAuthorization();
 
 const string WebClientCorsPolicy = "WebClient";
+var webClientOrigin = builder.Configuration["Cors:AllowedOrigin"] ?? "http://localhost:5173";
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(WebClientCorsPolicy, policy =>
-        policy.WithOrigins("http://localhost:5173")
+        policy.WithOrigins(webClientOrigin)
             .AllowAnyHeader()
             .AllowAnyMethod());
 });
@@ -79,7 +88,10 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
     app.MapScalarApiReference();
     app.MapGet("/", () => Results.Redirect("/scalar/v1")).ExcludeFromDescription();
+}
 
+if (app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Testing"))
+{
     using var scope = app.Services.CreateScope();
     await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Database.MigrateAsync();
     await SeedData.InitializeAsync(scope.ServiceProvider);

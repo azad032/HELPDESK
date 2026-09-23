@@ -483,7 +483,12 @@ $RECYCLE.BIN/
 
 # Project-specific
 **/appsettings.Development.json
+**/appsettings.Testing.json
 *.db
 *.sqlite
 *.sqlite3
 src/HELPDESK.Api/App_Data/
+
+# Playwright
+playwright-report/
+blob-report/
